@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "compare": "c",
+        "bluetooth.h": "c",
+        "dk_buttons_and_leds.h": "c"
+    }
+}

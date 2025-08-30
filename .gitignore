@@ -1,1 +1,14 @@
 build*/
+*.o
+*.bin
+*.hex
+*.elf
+*.map
+*.d
+*.log
+zephyr/
+CMakeFiles/
+CMakeCache.txt
+*.a
+*.pyc
+*.swp
