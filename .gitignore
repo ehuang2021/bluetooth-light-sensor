@@ -12,3 +12,6 @@ CMakeCache.txt
 *.a
 *.pyc
 *.swp
+.DS_Store
+.gitignore
+.vscode
