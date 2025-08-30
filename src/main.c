@@ -8,7 +8,8 @@
 #include <zephyr/drivers/sensor/veml7700.h>
 
 /*Device Parameters*/
-#define LOOP_TIME 5
+#define LOOP_TIME 5     /*in seconds*/
+#define ITTIME 100      /*in millisecond*/
 
 /*BLE Flags*/
 #define UUID 0xFCD2
@@ -82,6 +83,7 @@ static int write_data16(uint8_t reg, uint16_t val) {
         return i2c_write_dt(&lux_sensor_i2c, tx, sizeof tx);
 }
 
+/*Read from I2C to out*/
 static int read_data16(uint8_t reg, uint16_t *out) {
     uint8_t rx[2];
     int err = i2c_write_read_dt(&lux_sensor_i2c, &reg, 1, rx, 2);
@@ -90,8 +92,6 @@ static int read_data16(uint8_t reg, uint16_t *out) {
     *out = (uint16_t)rx[0] | ((uint16_t)rx[1] << 8);  // LSB first
     return 0;
 }
-
-
 
 /*shuts down the sensor*/
 static void shutdown_sensor() {
@@ -112,12 +112,12 @@ static void start_sensor() {
                 /*if successful, it will sync global conf.*/
                 config_reg = config;
                 k_sleep(K_MSEC(3)); /*Waits >2.5ms after start per spec*/
+                k_sleep(K_MSEC(ITTIME + 50));
         }
         else {
                 LOG_ERR("Write data error / start_sensor\n");
         }
 }
-
 
 /*Initalizes light sensor*/
 static int init_light_sensor() {
@@ -167,8 +167,39 @@ static int init_light_sensor() {
 
 
 static void update_lux() {
+        struct sensor_value lux;
 
+        /*prepares sensor for data retrival*/
+        int err = sensor_sample_fetch(lux_sensor);
+        if (err) {
+                LOG_ERR("Sensor fetch error\n");
+                return;
+        }
+
+        /*saves light to lux*/
+        if (!sensor_channel_get(lux_sensor, SENSOR_CHAN_LIGHT, &lux)) {
+                LOG_ERR("Sensor read error\n");
+                return;
+        }
+
+        /*Converts outputted lux value to microlux*/
+        int64_t ulux = (int64_t)lux.val1 * 1000000LL + lux.val2;
+        if (ulux < 0) {
+                /*Prevents any negative numbers*/
+                ulux = 0;
+        }
+        /*Convert to centilux which is what the BTHome protocol calls for*/
+        uint32_t clux = (uint32_t)((ulux + 5000) / 10000);
+        /*Clamps to 24 bit*/
+        if (clux > 0xFFFFFF) {clux = 0xFFFFFF;}
+
+
+        /*Time to pack into bluetooth packet*/
+        bthome_data.lux[0] = (uint8_t) clux; /*Last nibble. With the typecast, it only saves the last 8 bits*/
+        bthome_data.lux[1] = (uint8_t) (clux >> 8); /*Middle nibble*/
+        bthome_data.lux[2] = (uint8_t) (clux >> 16); /*Final nibble*/
 }
+
 
 static void update_battery() {
 
