@@ -62,13 +62,66 @@ static const struct bt_data ad[] = {
 
 
 /*Hardware Section*/
+#define LIGHT_SENSOR_NODE DT_NODELABEL(light_sensor)
 
-const struct device *const lux_sensor = DEVICE_DT_GET(DT_NODELABEL(light_sensor));
+/*Zephyr API*/
+const struct device *const lux_sensor = DEVICE_DT_GET(LIGHT_SENSOR_NODE);
+
+/*Manual I2C bit change*/
+static const struct i2c_dt_spec lux_sensor_i2c = I2C_DT_SPEC_GET(LIGHT_SENSOR_NODE);
+
+
+#define CONFIG_REGISTER 0x00
+/*Configeration number*/
+static uint16_t config_reg;
+
+/*Writes to I2C. To use, send in the 16 bit modified reg as val*/
+static int write_data16(uint8_t reg, uint16_t val) {
+
+        uint8_t tx[3] = { reg, (uint8_t)(val & 0xFF), (uint8_t)(val >> 8) };
+        return i2c_write_dt(&lux_sensor_i2c, tx, sizeof tx);
+}
+
+static int read_data16(uint8_t reg, uint16_t *out) {
+    uint8_t rx[2];
+    int err = i2c_write_read_dt(&lux_sensor_i2c, &reg, 1, rx, 2);
+    if (err) return err;
+
+    *out = (uint16_t)rx[0] | ((uint16_t)rx[1] << 8);  // LSB first
+    return 0;
+}
+
+
+
+/*shuts down the sensor*/
+static void shutdown_sensor() {
+        int config = config_reg | 0x0001; /*Changes last bit (the shutdown bit) to 1, which shuts down the sensor*/
+        if (!(write_data16(CONFIG_REGISTER, config))) {
+                /*if successful, it will sync global conf.*/
+                config_reg = config;
+        }
+        else {
+                LOG_ERR("Write data error / shutdown_sensor\n");
+        }
+}
+
+/*starts the sensor*/
+static void start_sensor() {
+        int config = config_reg | 0x0001; /*Changes last bit (the shutdown bit) to 1, which shuts down the sensor*/
+        if (!(write_data16(CONFIG_REGISTER, config))) {
+                /*if successful, it will sync global conf.*/
+                config_reg = config;
+                k_sleep(K_MSEC(3)); /*Waits >2.5ms after start per spec*/
+        }
+        else {
+                LOG_ERR("Write data error / start_sensor\n");
+        }
+}
 
 
 /*Initalizes light sensor*/
 static int init_light_sensor() {
-/*Currently, the ALS_GAIN is set to x2 and ALS_IT is at 200ms. This yields*/
+/*Currently, the ALS_GAIN is set to x2 and ALS_IT is at 100ms. This yields*/
         
         if (!device_is_ready(lux_sensor)) {
                 LOG_ERR("lux_sensor is not ready\n");
@@ -78,17 +131,36 @@ static int init_light_sensor() {
         struct sensor_value params;
 
         /*ALS_IT init*/
-        params.val1 = VEML7700_ALS_IT_200; /*Sets ALS_IT (scanning duration) to 200ms*/
+        params.val1 = VEML7700_ALS_IT_100; /*Sets ALS_IT (scanning duration) to 200ms*/
         params.val2 = 0;
 
-        int err = sensor_attr_get(lux_sensor, SENSOR_CHAN_LIGHT, SENSOR_ATTR_VEML7700_ITIME, &params);
+        int err = sensor_attr_set(lux_sensor, SENSOR_CHAN_LIGHT, SENSOR_ATTR_VEML7700_ITIME, &params);
         
         if (err) {
                 LOG_ERR("ALS_IT set error\n");
+                return -1;
+        }
+        else {
+
         }
 
         /*ALS_GAIN init*/
-        params.val1 = VEML7700_ALS_GAIN_1
+        params.val1 = VEML7700_ALS_GAIN_2;
+        params.val2 = 0;
+
+        err = sensor_attr_set(lux_sensor, SENSOR_CHAN_LIGHT, SENSOR_ATTR_VEML7700_GAIN, &params);
+
+        if (err) {
+                LOG_ERR("GAIN set error\n");
+                return -1;
+        }
+        
+        if (read_data16(CONFIG_REGISTER, config_reg)) {
+                LOG_ERR("Config init fail, i2c read error\n");
+                return -1;
+        }
+        LOG_INF("VEML7700 config set, Gain = x2, IT = 200ms");
+        return 0;
 }
 
 
@@ -110,6 +182,11 @@ int main(void)
 {
         int err;
 
+        /*initalizes the light sensor.*/
+        if (!init_light_sensor()) {
+                return -1;
+        }
+
         err = bt_enable(NULL); /*initalized bluetooth*/
 	if (err) {
 		LOG_ERR("Bluetooth init failed (err %d)\n", err);
@@ -125,9 +202,11 @@ int main(void)
 	}
 
         while (1) {
+                start_sensor(); /*starts sensor*/
                 update_lux(); /*updates the lux value*/
                 update_battery(); /*updates the battery value*/
                 update_ad(); /*pushes the new info to the bluetooth broadcast*/
+                shutdown_sensor(); /**/
                 k_sleep(K_SECONDS(LOOP_TIME)); /*Sleeps for 5 seconds*/
         }
 

@@ -18,9 +18,9 @@
         label = "LIGHT_SENSOR";
 
 
-        /*Sensor mode */
-        psm-mode = <0x07>; /*Sets the power saving mode. Current is 4, lowest power mode*/
-
+        /* probably wont be needing this if i manually turn off and on the sensor
+        psm-mode = <0x07>; /*Sets the power saving mode. Current is 4, lowest power mode
+        */
     };
 };
 
