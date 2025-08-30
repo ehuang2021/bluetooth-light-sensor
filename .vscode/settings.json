@@ -2,6 +2,7 @@
     "files.associations": {
         "compare": "c",
         "bluetooth.h": "c",
-        "dk_buttons_and_leds.h": "c"
+        "dk_buttons_and_leds.h": "c",
+        "veml7700.h": "c"
     }
 }

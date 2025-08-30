@@ -5,7 +5,7 @@ The project is a battery powered BLE light sensor that I am going to use to sens
 I want to eventually print it out to a PCB running the nRF52832 SoC for size and power efficencies. 
 
 ## Hardware
-- nRF52 DK
+- nRF52832 SoC
 - VEML7700 sensor
 - CR2032 battery
 

@@ -3,19 +3,25 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/gap.h>
 #include <zephyr/sys/util.h>
-#include <dk_buttons_and_leds.h>
+#include <zephyr/drivers/i2c.h>
+#include <zephyr/drivers/sensor.h>
+#include <zephyr/drivers/sensor/veml7700.h>
 
+/*Device Parameters*/
+#define LOOP_TIME 5
+
+/*BLE Flags*/
 #define UUID 0xFCD2
-#define BTHome_flag 0x020106
+#define BTHOME_FLAG 0x020106
 #define DEVICE_INFO 0x40
-#define BATTERY_ID 0x01 /*Battery */
+#define BATTERY_ID 0x01
 #define ILLUMENCE_ID 0x05
 
 LOG_MODULE_REGISTER(main);  /*log module register*/
 
+/*Naming*/
 static char device_name[] = "light_sensor_proki"; /*name of device*/
 #define DEVICE_NAME_LEN (sizeof(device_name) - 1) /*no null terminator*/
-
 
 __packed typedef struct bthome_data{     /*This creates the struct for the payload. Using a struct allows for dynamic allocation of lux and battery data*/                   
         uint16_t uuid;          /*packs the data together so no weird padding from structs happens*/
@@ -47,10 +53,45 @@ static BTHOME_DATA bthome_data = { /*creates bthome payload*/
 
 
 static const struct bt_data ad[] = { 
-        BT_DATA_BYTES(BT_DATA_FLAGS, BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR), /*contains flag marker, as well as LE General Discoverable Mode and traditional BT not supported*/
+        BT_DATA_BYTES(BT_DATA_FLAGS, BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR), /*contains flag marker, as well as LE General Discoverable Mode and traditional BT not supported. BTHOME_FLAG*/
         BT_DATA(BT_DATA_NAME_COMPLETE, device_name, DEVICE_NAME_LEN), /*This is the name segment of packet*/
         BT_DATA(BT_DATA_SVC_DATA16, &bthome_data, sizeof(BTHOME_DATA)) /*Includes the complete data part of packet*/
 };
+
+
+
+
+/*Hardware Section*/
+
+const struct device *const lux_sensor = DEVICE_DT_GET(DT_NODELABEL(light_sensor));
+
+
+/*Initalizes light sensor*/
+static int init_light_sensor() {
+/*Currently, the ALS_GAIN is set to x2 and ALS_IT is at 200ms. This yields*/
+        
+        if (!device_is_ready(lux_sensor)) {
+                LOG_ERR("lux_sensor is not ready\n");
+                return -1;
+        }
+
+        struct sensor_value params;
+
+        /*ALS_IT init*/
+        params.val1 = VEML7700_ALS_IT_200; /*Sets ALS_IT (scanning duration) to 200ms*/
+        params.val2 = 0;
+
+        int err = sensor_attr_get(lux_sensor, SENSOR_CHAN_LIGHT, SENSOR_ATTR_VEML7700_ITIME, &params);
+        
+        if (err) {
+                LOG_ERR("ALS_IT set error\n");
+        }
+
+        /*ALS_GAIN init*/
+        params.val1 = VEML7700_ALS_GAIN_1
+}
+
+
 
 
 static void update_lux() {
@@ -87,7 +128,8 @@ int main(void)
                 update_lux(); /*updates the lux value*/
                 update_battery(); /*updates the battery value*/
                 update_ad(); /*pushes the new info to the bluetooth broadcast*/
+                k_sleep(K_SECONDS(LOOP_TIME)); /*Sleeps for 5 seconds*/
         }
 
-        return 0
+        return 0;
 }
