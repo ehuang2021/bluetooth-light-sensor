@@ -6,6 +6,9 @@
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/drivers/sensor/veml7700.h>
+#include <zephyr/drivers/adc.h>
+#include <hal/nrf_saadc.h>
+
 
 /*Device Parameters*/
 #define LOOP_TIME 5     /*in seconds*/
@@ -65,10 +68,10 @@ static const struct bt_data ad[] = {
 /*Hardware Section*/
 #define LIGHT_SENSOR_NODE DT_NODELABEL(light_sensor)
 
-/*Zephyr API*/
+/*Zephyr API device object*/
 const struct device *const lux_sensor = DEVICE_DT_GET(LIGHT_SENSOR_NODE);
 
-/*Manual I2C bit change*/
+/*Manual I2C bit change object*/
 static const struct i2c_dt_spec lux_sensor_i2c = I2C_DT_SPEC_GET(LIGHT_SENSOR_NODE);
 
 
@@ -107,7 +110,7 @@ static void shutdown_sensor() {
 
 /*starts the sensor*/
 static void start_sensor() {
-        int config = config_reg | 0x0001; /*Changes last bit (the shutdown bit) to 1, which shuts down the sensor*/
+        int config = config_reg & ~0x0001; /*Changes last bit (the shutdown bit) to 1, which shuts down the sensor*/
         if (!(write_data16(CONFIG_REGISTER, config))) {
                 /*if successful, it will sync global conf.*/
                 config_reg = config;
@@ -155,7 +158,7 @@ static int init_light_sensor() {
                 return -1;
         }
         
-        if (read_data16(CONFIG_REGISTER, config_reg)) {
+        if (read_data16(CONFIG_REGISTER, &config_reg)) {
                 LOG_ERR("Config init fail, i2c read error\n");
                 return -1;
         }
@@ -201,8 +204,75 @@ static void update_lux() {
 }
 
 
-static void update_battery() {
+/*Battery Implementation*/
+#define ADC_NODE DT_NODELABEL(adc) 
+#define VBAT_ADC_CHAN_ID   0
+#define VBAT_SAMPLES       8                      /* average N reads */
+#define ADC_RESOLUTION     12                     /* 12‑bit */
+#define ADC_MAX            ((1 << ADC_RESOLUTION) - 1)
+static const struct device *adc_dev;
 
+static int battery_adc_init() {
+        adc_dev = DEVICE_DT_GET(ADC_NODE);
+        if (!device_is_ready(adc_dev)) {
+                LOG_ERR("ADC Battery device not ready\n");
+                return -1;
+        }
+
+    struct adc_channel_cfg ch_cfg = {
+        .gain             = ADC_GAIN_1_6,
+        .reference        = ADC_REF_INTERNAL,
+        .acquisition_time = ADC_ACQ_TIME_DEFAULT,
+        .channel_id       = VBAT_ADC_CHAN_ID,
+        /* nRF-specific: read internal supply via VDD/4 */
+        .input_positive   = NRF_SAADC_INPUT_VDD,
+    };
+
+    return adc_channel_setup(adc_dev, &ch_cfg);
+}
+
+
+static int read_battery_mv(int *mv_out) {
+        int16_t sample = 0;
+
+        const struct adc_sequence seq = {
+        .channels    = BIT(VBAT_ADC_CHAN_ID),
+        .buffer      = &sample,
+        .buffer_size = sizeof(sample),
+        .resolution  = ADC_RESOLUTION,
+    };
+
+    int err = adc_read(adc_dev, &seq);
+    if (err) {
+        LOG_ERR("Battery read error code: %d", err);
+        return -1;
+    }
+    int32_t mv = ((int32_t)sample * 3600 * 4) / ADC_MAX;
+    *mv_out = mv;
+    return 0;
+
+}
+
+static uint8_t vbat_percent_from_mv(int mv)
+{
+    if (mv >= 3000) return 100;
+    if (mv <= 2300) return 0;
+    /* quick linear segments; refine later */
+    if (mv >= 2850) return 80 + (mv - 2850) * 20 / 150;   // 2850–3000 → 80–100
+    if (mv >= 2700) return 50 + (mv - 2700) * 30 / 150;   // 2700–2850 → 50–80
+    if (mv >= 2550) return 20 + (mv - 2550) * 30 / 150;   // 2550–2700 → 20–50
+    if (mv >= 2400) return 5  + (mv - 2400) * 15 / 150;   // 2400–2550 → 5–20
+    return (uint8_t)((mv - 2300) * 5 / 100);              // 2300–2400 → 0–5
+}
+
+static void update_battery() {
+        int mv = 0;
+        if (read_battery_mv(&mv) == 0) {
+                bthome_data.battery = vbat_percent_from_mv(mv);
+        }
+        else {
+                bthome_data.battery = 0xff; /*unknown or couldn't read*/
+        }
 }
 
 static void update_ad() {
@@ -214,10 +284,13 @@ int main(void)
         int err;
 
         /*initalizes the light sensor.*/
-        if (!init_light_sensor()) {
+        if (init_light_sensor()) {
                 return -1;
         }
-
+        /*initalizes battery reader*/
+        if (battery_adc_init()) {
+                return -1;
+        }
         err = bt_enable(NULL); /*initalized bluetooth*/
 	if (err) {
 		LOG_ERR("Bluetooth init failed (err %d)\n", err);
