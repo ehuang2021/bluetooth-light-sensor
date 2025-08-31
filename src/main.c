@@ -23,9 +23,6 @@
 
 LOG_MODULE_REGISTER(main);  /*log module register*/
 
-/*Naming*/
-static char device_name[] = "light_sensor_proki"; /*name of device*/
-#define DEVICE_NAME_LEN (sizeof(device_name) - 1) /*no null terminator*/
 
 __packed typedef struct bthome_data{     /*This creates the struct for the payload. Using a struct allows for dynamic allocation of lux and battery data*/                   
         uint16_t uuid;          /*packs the data together so no weird padding from structs happens*/
@@ -40,7 +37,7 @@ __packed typedef struct bthome_data{     /*This creates the struct for the paylo
 
 
 static const struct bt_le_adv_param *adv_param =
-	BT_LE_ADV_PARAM(BT_LE_ADV_OPT_NONE, /* No options specified */
+	BT_LE_ADV_PARAM(BT_LE_ADV_OPT_USE_NAME | BT_LE_ADV_OPT_USE_IDENTITY, /* No options specified */
 			8000, /* Min Advertising Interval 5s (n*0.625ms) */
 			16000, /* Max Advertising Interval 10s (n*0.625ms) */
 			NULL); /* Set to NULL for undirected advertising */
@@ -58,7 +55,6 @@ static BTHOME_DATA bthome_data = { /*creates bthome payload*/
 
 static const struct bt_data ad[] = { 
         BT_DATA_BYTES(BT_DATA_FLAGS, BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR), /*contains flag marker, as well as LE General Discoverable Mode and traditional BT not supported. BTHOME_FLAG*/
-        BT_DATA(BT_DATA_NAME_COMPLETE, device_name, DEVICE_NAME_LEN), /*This is the name segment of packet*/
         BT_DATA(BT_DATA_SVC_DATA16, &bthome_data, sizeof(BTHOME_DATA)) /*Includes the complete data part of packet*/
 };
 
@@ -304,7 +300,7 @@ int main(void)
 		LOG_ERR("Advertising failed to start (err %d)\n", err);
 		return -1;
 	}
-
+        LOG_INF("Starting up broadcasting loop.\n");
         while (1) {
                 start_sensor(); /*starts sensor*/
                 update_lux(); /*updates the lux value*/
